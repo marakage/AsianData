@@ -1,0 +1,184 @@
+---
+title: Data Visualizations
+author: "Mara Kage"
+date: "November 14, 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(acs)
+
+library(tigris)
+
+# install.packages("leaflet")
+library(leaflet)
+
+#install.packages("mapview")
+library(mapview)
+webshot::install_phantomjs()
+
+
+
+setwd("/Users/marakage/Desktop/Honors/STAT/Labs")
+AsianAlone <- read.csv("DEC_10_SF2_PCT1_with_ann.csv")
+Totalpopulation <- read_csv("../Datasets/TotalPopulation/ACS_10_5YR_B01003_with_ann.csv",skip=0)
+data_asian_alone <- read_csv("./asian/data_asian_alone.csv")
+
+#AsianAlone <- read.csv("DEC_10_SF2_PCT1_with_ann.csv")
+data_subset_total <- Totalpopulation %>% 
+  filter(GEO.id != "Id") %>%
+  mutate(TotalCount = as.numeric(as.character(HD01_VD01))) 
+
+data_asian_alone <- data_asian_alone %>%
+  mutate(GEO.id2 = as.character(GEO.id2))
+
+mergedata <- data_subset_total %>% 
+  left_join(data_asian_alone, by="GEO.id2") %>%
+  select(-GEO.id.y, -ends_with("label.y")) %>%
+  mutate(totalprop = Count/ TotalCount)
+submergedata <- mergedata %>%
+  filter(POPGROUP.id != "012" & POPGROUP.id != "031") 
+
+#total number of tracts that doesn't have Asian Alone or in combination   
+sum(is.na(mergedata$Count))
+barpop <- submergedata %>%
+  mutate(Asiansubgroup = `POPGROUP.display.label`) %>%
+  group_by(POPGROUP.id, Asiansubgroup) %>% #join all the tract population by same subgroup
+  summarise(subpoptotal = sum(Count)) %>% 
+  mutate(subgroup_prop = round(subpoptotal/sum(data_subset_total$TotalCount), 5))#new column with the proportion of each subgroup population with total population in King County  
+
+```
+
+
+```{r, echo=FALSE}
+ggplot(barpop, aes(x=Asiansubgroup, y=subgroup_prop)) +
+  geom_bar(stat="identity", width=.5, fill="tomato3") + 
+  labs(title="Proportion of Asian Subgroups with the Total Populatiton in King County", 
+        caption="source: Census 2010") + 
+  theme(axis.text.x = element_text(angle=90, vjust=0.6), aspect.ratio = 0.5) +
+  ylab("Population Proportion")
+
+#yes, the aspect ration now emphasized the x-axis and helped visualize the subgroups bettter.
+
+```
+
+The geom(bar) generates the barcharts as visual representation, that I believe best convey the information of each Asian subgroup population proportionality. The final tale was transformed from two original tables from 2010 Census. Table 1 - mergedata - represented the total population count per tract in King County and table 2 - barpop -  represented each Asian subgroup population count per tract. By merging both tables I created tables for total population count per Asian subgroup, and divided the total population count to get the proportion/response varible.
+My main research question for this quantitative analysis is to convey the diversity withing the Asian racial category and the final barchart represents that by population number. 
+
+
+```{r, echo=FALSE}
+
+#api.key.install(key = "ef5145372edc6b4c764c56e185c6cde3f3f1528f")
+
+#Create a geo.set object for all census tracts in the Puget Sound region
+king <- geo.make(state = "WA", county = c(33), tract = "*")
+# FIPS codes for counties
+
+# Supply the geo.set object to fetch commute data from ACS
+asian <- acs.fetch(endyear = 2010, geography = king,
+                   table.number = "B02006", col.names = "pretty",
+                   case.sesitive = FALSE)
+
+#load("asiandataset.RData")
+
+#names(attributes(asian))
+#head(attr(asian, "acs.colnames"))
+
+asian_df <- data.frame(
+paste0(
+str_pad(asian@geography$state, 2, "left", pad="0"),
+str_pad(asian@geography$county, 3, "left", pad="0"),
+str_pad(asian@geography$tract, 6, "left", pad="0")
+),
+asian@estimate[,c("Asian Alone By Selected Groups: Total:", 
+                  "Asian Alone By Selected Groups: Cambodian",
+"Asian Alone By Selected Groups: Chinese , except Taiwanese",
+"Asian Alone By Selected Groups: Filipino",
+"Asian Alone By Selected Groups: Hmong",
+"Asian Alone By Selected Groups: Japanese",
+"Asian Alone By Selected Groups: Korean",
+"Asian Alone By Selected Groups: Laotian",
+"Asian Alone By Selected Groups: Taiwanese",
+"Asian Alone By Selected Groups: Vietnamese"
+)],
+stringsAsFactors = FALSE
+) %>%
+  rename(GEOID = paste0.str_pad.asian.geography.state..2...left...pad....0....,
+         Asian = Asian.Alone.By.Selected.Groups..Total.,
+         Cambodian = Asian.Alone.By.Selected.Groups..Cambodian, 
+         Chinese = Asian.Alone.By.Selected.Groups..Chinese...except.Taiwanese, 
+         Filipino = Asian.Alone.By.Selected.Groups..Filipino, 
+         Hmong = Asian.Alone.By.Selected.Groups..Hmong, 
+         Japanese = Asian.Alone.By.Selected.Groups..Japanese, 
+         Korean = Asian.Alone.By.Selected.Groups..Korean,
+         Laotian = Asian.Alone.By.Selected.Groups..Laotian, 
+         Taiwanese = Asian.Alone.By.Selected.Groups..Taiwanese, 
+         Vietnamese = Asian.Alone.By.Selected.Groups..Vietnamese)
+
+
+# Tidy version of data (didn't use for mapping)
+asian_tidy <- gather(asian_df, key = "Subgroup", value = "Population", ...= -GEOID)
+#as_tibble(asian_tidy)
+
+
+#################################
+### Downloaded spatial object ###
+#################################
+
+king_tract <- tracts(state = "WA", county = 33, cb = TRUE)
+
+
+asian_merged <- geo_join(king_tract, asian_df, "GEOID", "GEOID")
+asian_merged <- asian_merged[asian_merged$ALAND>0,]
+#asian_merged2 <- geo_join(asian_merged, income_df, "GEOID", "GEOID")
+
+
+#########################
+### Mapping your data ###
+#########################
+
+
+#############
+### Total ###
+#############
+
+popup1 <- paste0("GEOID: ", asian_merged$GEOID, "<br>", "Total # of Asians: ", asian_merged$Asian)
+
+pal1 <- colorNumeric(
+  palette = "YlGnBu",
+  domain = asian_merged$Asian
+)
+
+asian_total <- leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(data = asian_merged,
+              fillColor = ~pal1(Asian),
+              color = "#b2aeae", # you need to use hex colors
+              fillOpacity = 0.7,
+              weight = 1,
+              smoothFactor = 0.2, 
+              popup = popup1) %>%
+  addLegend(pal = pal1,
+            values = asian_merged$Asian,
+            position = "bottomright",
+            title = "Population of<br>Asians") %>%
+  setView(-122.330259, 47.609895, zoom = 10)
+asian_total
+
+
+```
+
+I chose to represent the 9 different Asian subroups via facet maps, and the code above represents the a sample of total Asian population in King County. I wanted to visually represent the diveristy of residential location per group, and oberserve:
+
+-which neighborhoods each subgroup is located and in which density
+-level of geographical integration and dispersiveness
+-are they located in traditionally neighborhoods of color, or predominatly white neighborhoods
+-how each subgroup compares - do each Asian subgroup tend to live in similar neighborhoods, and which subgroups tend or not to cluster together
+ 
+I believe maps best visually represent the complexities the mentioned information. 
+
+
